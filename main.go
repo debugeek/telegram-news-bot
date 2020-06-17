@@ -8,43 +8,35 @@ import (
 
 func main() {
 
-	session.SetHandler(func(s *Session, update tgbotapi.Update) (bool) {
+	session.SetHandler(func(s *Session, update tgbotapi.Update) {
 		log.Println(update.Message.Text)
 
 		context := GetContext(update.Message.Chat.ID)
 		if context == nil {
 			context = NewContext(update.Message.Chat.ID)
-			context.Reload()
+			context.Create()
 			context.Save()
 		}
 
 		if update.Message.IsCommand() {
 			switch update.Message.Command() {
 			case "list": {
-				if len(context.monitors) == 0 {
-					session.reply(context.id, update.Message.MessageID, "No subscription")
-				} else {
-					var message string
-					for idx, monitor := range context.monitors {
-						message += fmt.Sprintf("%d. [%s](%s) \n", idx + 1, monitor.subscription.title, monitor.subscription.link)
-					}
-					session.reply(context.id, update.Message.MessageID, message)
-				}
+				response := context.HandleListCommand()
+				session.Reply(context.id, update.Message.MessageID, response)
 				break
 			}
 
 			case "subscribe": {
-				url := update.Message.CommandArguments()
-				subscription, _ := Query(url)
+				args := update.Message.CommandArguments()
+				response := context.HandleSubscribeCommand(args)
+				session.Reply(context.id, update.Message.MessageID, response)
+				break
+			}
 
-				if subscription == nil {
-					session.reply(context.id, update.Message.MessageID, "NO RSS Found")
-				} else {
-					context.cache.AddSubscription(subscription)
-					context.Reload()
-
-					session.reply(context.id, update.Message.MessageID, fmt.Sprintf(`Subscription [%s](%s) added.`, subscription.title, subscription.link))
-				}
+			case "unsubscribe": {
+				args := update.Message.CommandArguments()
+				response := context.HandleUnsubscribeCommand(args)
+				session.Reply(context.id, update.Message.MessageID, response)
 				break
 			}
 
@@ -52,12 +44,17 @@ func main() {
 				break;
 			}
 		}
-		return true
 	})
 	session.Run()
 
-	LoadContexts()
+	err := LoadContexts()
+	if err != nil {
+		log.Println(err)
+	}
 
 	var input string
 	_, _ = fmt.Scanln(&input)
 }
+
+
+

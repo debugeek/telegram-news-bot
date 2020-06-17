@@ -15,6 +15,7 @@ type Subscription struct {
 
 type Item struct {
 	id string
+	guid string
 	title string
 	link string
 }

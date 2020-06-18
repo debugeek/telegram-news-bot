@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"fmt"
+	"time"
 	"database/sql"
 )
 
@@ -23,10 +24,7 @@ func (cache *Cache) Create() (error) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(`
-		create table if not exists subscription (id text not null primary key, title text, description text, link text);
-		create table if not exists item (id text not null, guid text not null);
-	`)
+	_, err = db.Exec(`create table if not exists subscription (id text not null primary key, title text, description text, link text, latest_publish_date datetime);`)
 	if err != nil {
 		return err
 	}
@@ -34,25 +32,7 @@ func (cache *Cache) Create() (error) {
 	return nil
 }
 
-func (cache *Cache) Delete() (error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = db.Exec(`
-		delete from subscription where id = ?;
-		delete from item where id = ?;
-	`, cache.id, cache.id)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (cache *Cache) AddSubscription(subscription *Subscription) (error) {
+func (cache *Cache) Insert(subscription *Subscription) (error) {
 	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
 	if err != nil {
 		return err
@@ -67,7 +47,7 @@ func (cache *Cache) AddSubscription(subscription *Subscription) (error) {
 	return nil
 }
 
-func (cache *Cache) GetSubscriptions() ([]*Subscription, error) {
+func (cache *Cache) Query() ([]*Subscription, error) {
 	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
 	if err != nil {
 		return nil, err
@@ -87,7 +67,8 @@ func (cache *Cache) GetSubscriptions() ([]*Subscription, error) {
 		var title string
 		var description string
 		var link string
-		if err := rows.Scan(&id, &title, &description, &link); err != nil {
+		var date *time.Time
+		if err := rows.Scan(&id, &title, &description, &link, &date); err != nil {
 			log.Println(err)
 			continue
 		}
@@ -97,13 +78,29 @@ func (cache *Cache) GetSubscriptions() ([]*Subscription, error) {
 			title: title,
 			description: description,
 			link: link,
+			date: date,
 		})
 	}
 
 	return subscriptions, nil
 }
 
-func (cache *Cache) DeleteSubscription(subscription *Subscription) (error) {
+func (cache *Cache) Update(subscription *Subscription) (error) {
+	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec("update subscription set title = ?, description = ?, link = ?, latest_publish_date = ? where id = ?;", subscription.title, subscription.description, subscription.link, subscription.date, subscription.id)
+	if err != nil {
+		return err
+	}
+	
+	return nil
+}
+
+func (cache *Cache) Delete(subscription *Subscription) (error) {
 	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
 	if err != nil {
 		return err
@@ -111,37 +108,6 @@ func (cache *Cache) DeleteSubscription(subscription *Subscription) (error) {
 	defer db.Close()
 
 	_, err = db.Exec("delete from subscription where id = ?;", subscription.id)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (cache *Cache) GetHasSent(item *Item) (bool, error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-
-	var exists bool
-	row := db.QueryRow("select exists(select 1 from item where id = ? and guid = ?);", item.id, item.guid)
-	if err := row.Scan(&exists); err != nil {
-    	return false, err
-	}
-	
-	return exists, nil
-}
-
-func (cache *Cache) SetHasSent(item *Item) (error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = db.Exec("insert into item(id, guid) values(?, ?);", item.id, item.guid)
 	if err != nil {
 		return err
 	}

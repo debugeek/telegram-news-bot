@@ -93,6 +93,7 @@ func Query(url string) (*Subscription, []*Item, error) {
 			guid: item.GUID,
 			title: item.Title,
 			link: item.Link,
+			date: item.PublishedParsed,
 		})
 	}
 

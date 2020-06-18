@@ -57,8 +57,10 @@ func LoadContexts() (error) {
 		}
 		
 		context := NewContext(id)
+		context.Create()
+		context.Save()
 
-		subscriptions, err := context.cache.GetSubscriptions()
+		subscriptions, err := context.cache.Query()
 		if err != nil {
 			return err
 		}
@@ -95,23 +97,30 @@ func (context *Context) Enqueue(subscription *Subscription) (error) {
 		return fmt.Errorf(`Subscription [%s](%s) exists.`, subscription.title, subscription.link)
 	}
 
-	err := context.cache.AddSubscription(subscription)
+	err := context.cache.Insert(subscription)
 	if err != nil {
 		return err
 	}
 
 	monitor := NewMonitor(subscription)
 	monitor.SetHandler(func(monitor *Monitor, items []*Item) {
-		for _, item := range items {
-			if hasSent, err := context.cache.GetHasSent(item); hasSent || err != nil {
-				continue
-			}
-
-			msg := fmt.Sprintf("[%s](%s)", item.title, item.link)
-			session.Send(context.id, msg)
-
-			context.cache.SetHasSent(item)
+		if len(items) == 0 {
+			return
 		}
+
+		subscription := monitor.subscription
+
+		if subscription.date != nil {
+			for _, item := range items {
+				if item.date.After(*subscription.date) {
+					msg := fmt.Sprintf("[%s](%s)", item.title, item.link)
+					session.Send(context.id, msg)
+				}
+			}
+		}
+
+		subscription.date = items[len(items) - 1].date
+		context.cache.Update(subscription)
 	})
 	monitor.Run()
 
@@ -121,7 +130,7 @@ func (context *Context) Enqueue(subscription *Subscription) (error) {
 }
 
 func (context *Context) Dequeue(subscription *Subscription) (error) {
-	err := context.cache.DeleteSubscription(subscription)
+	err := context.cache.Delete(subscription)
 	if err != nil {
 		return err
 	}

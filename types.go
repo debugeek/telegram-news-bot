@@ -1,5 +1,9 @@
 package main
 
+import (
+	"time"
+)
+
 type Config struct {
 	Token string `json:"token"`
 	MinInterval int `json:"minimum_interval"`
@@ -11,6 +15,7 @@ type Subscription struct {
 	title string
 	description string
 	link string
+	date *time.Time
 }
 
 type Item struct {
@@ -18,4 +23,5 @@ type Item struct {
 	guid string
 	title string
 	link string
+	date *time.Time
 }

@@ -7,6 +7,11 @@ import (
 )
 
 func main() {
+	if session == nil {
+		log.Fatal(`Session initialize failed.`)
+	} else {
+		log.Println(`Session initialize successed`)
+	}
 
 	session.SetHandler(func(s *Session, update tgbotapi.Update) {
 		log.Println(update.Message.Text)

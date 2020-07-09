@@ -7,48 +7,30 @@ import (
 	"database/sql"
 )
 
-type Cache struct {
+type Database struct {
 	id int64
 }
 
-func NewCache(id int64) (*Cache) {
-	return &Cache {
-		id: id,
-	}
-}
-
-func (cache *Cache) Create() (error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
+func CreateDatabase(id int64) (*Database, error) {
+	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", id))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer db.Close()
 
 	_, err = db.Exec(`create table if not exists subscription (id text not null primary key, title text, description text, link text, latest_publish_date datetime);`)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	database := &Database {
+		id: id,
+	}
+	return database, nil
 }
 
-func (cache *Cache) Insert(subscription *Subscription) (error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = db.Exec("replace into subscription(id, title, description, link) values(?, ?, ?, ?);", subscription.id, subscription.title, subscription.description, subscription.link)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (cache *Cache) Query() ([]*Subscription, error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
+func (database *Database) QuerySubscriptions() ([]*Subscription, error) {
+	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", database.id))
 	if err != nil {
 		return nil, err
 	}
@@ -85,8 +67,23 @@ func (cache *Cache) Query() ([]*Subscription, error) {
 	return subscriptions, nil
 }
 
-func (cache *Cache) Update(subscription *Subscription) (error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
+func (database *Database) InsertSubscription(subscription *Subscription) (error) {
+	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", database.id))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec("replace into subscription(id, title, description, link) values(?, ?, ?, ?);", subscription.id, subscription.title, subscription.description, subscription.link)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (database *Database) UpdateSubscription(subscription *Subscription) (error) {
+	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", database.id))
 	if err != nil {
 		return err
 	}
@@ -100,8 +97,8 @@ func (cache *Cache) Update(subscription *Subscription) (error) {
 	return nil
 }
 
-func (cache *Cache) Delete(subscription *Subscription) (error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", cache.id))
+func (database *Database) DeleteSubscription(subscription *Subscription) (error) {
+	db, err := sql.Open("sqlite3", fmt.Sprintf("%d.db", database.id))
 	if err != nil {
 		return err
 	}

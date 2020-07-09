@@ -7,20 +7,48 @@ import (
 )
 
 func main() {
-	if session == nil {
-		log.Fatal(`Session initialize failed.`)
-	} else {
-		log.Println(`Session initialize successed`)
+	InitSession()
+	
+	InitContents()
+
+	var input string
+	_, _ = fmt.Scanln(&input)
+}
+
+var (
+	token string
+	session *Session
+)
+
+func InitSession() {
+	log.Println(token)
+
+	if (len(token) == 0) {
+		log.Fatal("Token can't be nil")
 	}
+
+	bot, err := tgbotapi.NewBotAPI(token)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	session = &Session{
+		token: token,
+		bot: bot,
+	}
+	log.Println(`Session initialize successed`)
 
 	session.SetHandler(func(s *Session, update tgbotapi.Update) {
 		log.Println(update.Message.Text)
 
-		context := GetContext(update.Message.Chat.ID)
+		context, err := GetContext(update.Message.Chat.ID)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
 		if context == nil {
-			context = NewContext(update.Message.Chat.ID)
-			context.Create()
-			context.Save()
+			context, err = CreateContext(update.Message.Chat.ID)
 		}
 
 		if update.Message.IsCommand() {
@@ -51,15 +79,12 @@ func main() {
 		}
 	})
 	session.Run()
-
-	err := LoadContexts()
-	if err != nil {
-		log.Println(err)
-	}
-
-	var input string
-	_, _ = fmt.Scanln(&input)
 }
 
-
-
+func InitContents() {
+	err := LoadContexts()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println(`Contents initialize successed`)
+}

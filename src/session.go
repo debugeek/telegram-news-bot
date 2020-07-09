@@ -6,33 +6,10 @@ import (
 	"github.com/go-telegram-bot-api/telegram-bot-api"
 )
 
-var (
-	session *Session
-)
-
 type Session struct {
 	bot *tgbotapi.BotAPI
 	token string
 	handler func(s *Session, update tgbotapi.Update)
-}
-
-func init() {	
-	token := config.Token
-	if (len(token) == 0) {
-		log.Println("Token can't be nil")
-		return
-	}
-
-	bot, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	session = &Session{
-		token: token,
-		bot: bot,
-	}
 }
 
 func (session *Session) SetHandler(handler func(s *Session, update tgbotapi.Update)) {

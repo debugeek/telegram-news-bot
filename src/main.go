@@ -1,14 +1,24 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/alexflint/go-arg"
 )
 
 var args struct {
 	Token string `arg:"-t,--token" help:"telegram bot token"`
+}
+
+func launch() {
+	InitSession()
+
+	InitMonitor()
+
+	InitContents()
 }
 
 func main() {
@@ -19,12 +29,10 @@ func main() {
 		log.Fatal("token not found")
 	}
 
-	InitSession()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 
-	InitMonitor()
+	go launch()
 
-	InitContents()
-
-	var input string
-	_, _ = fmt.Scanln(&input)
+	<-sigs
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"os"
 )
 
 func isValidURL(text string) bool {
@@ -16,4 +17,12 @@ func isValidURL(text string) bool {
 	}
 
 	return true
+}
+
+func FileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
 }

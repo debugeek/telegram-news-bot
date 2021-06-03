@@ -2,259 +2,214 @@ package main
 
 import (
 	"fmt"
-	"database/sql"
+	"log"
 	"strconv"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
 type Context struct {
-	id int64
-	database *Database
-	monitors []*Monitor
+	id           int64
+	account      *Account
+	subscription *Subscription
 }
 
-var contexts map[int64]*Context = make(map[int64]*Context)
-
-func LoadContexts() (error) {
-	db, err := sql.Open("sqlite3", "./context.db")
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = db.Exec("create table if not exists context (id integer not null primary key);")
+func InitContents() error {
+	accounts, err := SharedFirebase().GetAccounts()
 	if err != nil {
 		return err
 	}
 
-	rows, err := db.Query("select * from context;")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		
-		context, err := GetContext(id)
+	for _, account := range accounts {
+		_, err := NewContext(account.Id)
 		if err != nil {
 			return err
 		}
-
-		subscriptions, err := context.database.QuerySubscriptions()
-		if err != nil {
-			return err
-		}
-
-		for _, subscription := range subscriptions {
-			context.EnqueueSubscription(subscription)
-		}
-
-		contexts[id] = context
 	}
 
 	return nil
 }
 
-func CreateContext(id int64) (*Context, error) {
-	db, err := sql.Open("sqlite3", "context.db")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-
-	_, err = db.Exec("create table if not exists context (id int64 not null primary key);")
-	if err != nil {
-		return nil, err
-	}
-	
-	_, err = db.Exec("replace into context(id) values(?);", id)
-	if err != nil {
-		return nil, err
-	}
-
-	database, err := CreateDatabase(id)
-	if err != nil {
-		return nil, err
-	}
-
-	context := &Context {
-		id: id,
-		database: database,
-		monitors: make([]*Monitor, 0),
-	}
-
-	contexts[id] = context
-
-	return context, nil
-}
-
-func GetContext(id int64) (*Context, error) {
+func NewContext(id int64) (*Context, error) {
 	context := contexts[id]
 	if context != nil {
 		return context, nil
 	}
 
-	db, err := sql.Open("sqlite3", "context.db")
+	account, err := SharedFirebase().GetAccount(id)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
-
-	rows, err := db.Query("select * from context where id = ?;", id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	if rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+	if account == nil {
+		account = &Account{
+			Id:   id,
+			kind: 0,
+		}
+		err = SharedFirebase().SaveAccount(account)
+		if err != nil {
 			return nil, err
 		}
-
-		database := &Database {
-			id: id,
-		}
-		context = &Context {
-			id: id,
-			database: database,
-		}
-		contexts[id] = context
 	}
+
+	subscription, err := SharedFirebase().GetSubscription(account)
+	if err != nil {
+		return nil, err
+	}
+	if subscription == nil {
+		subscription = &Subscription{
+			Sources: make(map[string]*Source),
+		}
+		SharedFirebase().SaveSubscription(account, subscription)
+	}
+
+	context = &Context{
+		id:           id,
+		account:      account,
+		subscription: subscription,
+	}
+
+	for _, source := range subscription.Sources {
+		err = context.Observe(source)
+		if err != nil {
+			return nil, err
+		}
+		context.subscription.Sources[source.Id] = source
+	}
+
+	contexts[account.Id] = context
 
 	return context, nil
 }
 
-func (context *Context) SubscribeSubscription(subscription *Subscription) (error) {
-	exists := false
-	for _, monitor := range context.monitors {
-		if monitor.subscription.id == subscription.id {
-			exists = true
-			break
-		}
-	}
-
-	if exists {
-		return fmt.Errorf(`Subscription [%s](%s) exists.`, subscription.title, subscription.link)
-	}
-
-	err := context.database.InsertSubscription(subscription)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (context *Context) UnsubscribeSubscription(subscription *Subscription) (error) {
-	err := context.database.DeleteSubscription(subscription)
-	if err != nil {
-		return err
-	}
-
-	for index, monitor := range context.monitors {
-		if monitor.subscription.id != subscription.id {
-			continue
-		}
-
-		monitor.Stop()
-
-		context.monitors = append(context.monitors[:index], context.monitors[index + 1:]...)
-	}
-
-	return nil;
-}
-
-func (context *Context) EnqueueSubscription(subscription *Subscription) (error) {
-	for _, monitor := range context.monitors {
-		if monitor.subscription.id == subscription.id {
-			return fmt.Errorf(`Subscription [%s](%s) duplicated.`, subscription.title, subscription.link)
-		}
-	}
-
-	monitor := &Monitor {
-		subscription: subscription,
-	}
-
-	monitor.SetHandler(func(monitor *Monitor, items []*Item) {
+func (context *Context) Observe(source *Source) error {
+	SharedMonitor().Observe(source.Link, func(items []*Item) {
 		if len(items) == 0 {
 			return
 		}
 
-		subscription := monitor.subscription
+		for _, item := range items {
+			records, err := SharedFirebase().PostRecords(context.account)
+			if err != nil {
+				log.Println(err)
+				return
+			}
 
-		if subscription.date != nil {
-			for _, item := range items {
-				if item.date.After(*subscription.date) {
-					msg := fmt.Sprintf("[%s](%s)", item.title, item.link)
-					session.Send(context.id, msg)
-				}
+			if records[item.guid] {
+				continue
+			}
+
+			msg := fmt.Sprintf("[%s](%s)", item.title, item.link)
+			err = session.Send(context.id, msg)
+			if err != nil {
+				log.Println(err)
+				return
 			}
 		}
 
-		subscription.date = items[len(items) - 1].date
-		context.database.UpdateSubscription(subscription)
+		SharedFirebase().MarkItemsPosted(context.account, items)
 	})
-	monitor.Run()
-
-	context.monitors = append(context.monitors, monitor)
 
 	return nil
 }
 
-// Handlers
+func (context *Context) Subscribe(channel *Channel) (*Source, error) {
+	id := channel.id
 
-func (context *Context) HandleListCommand() (string) {
-	if len(context.monitors) == 0 {
-		return "No currently subscription now."
-	} else {
-		var message string
-		for idx, monitor := range context.monitors {
-			message += fmt.Sprintf("%d. [%s](%s) \n", idx + 1, monitor.subscription.title, monitor.subscription.link)
-		}
-		return message
+	source := context.subscription.Sources[id]
+	if source != nil {
+		return nil, fmt.Errorf(`Source [%s](%s) exists`, source.Title, source.Link)
 	}
+
+	source = &Source{
+		Id:    id,
+		Link:  channel.link,
+		Title: channel.title,
+	}
+	context.subscription.Sources[id] = source
+
+	err := fb.SaveSubscription(context.account, context.subscription)
+	if err != nil {
+		return nil, err
+	}
+
+	return source, nil
 }
 
-func (context *Context) HandleSubscribeCommand(args string) (string) {
+func (context *Context) Unsubscribe(source *Source) error {
+	log.Println(context.subscription.Sources)
+	delete(context.subscription.Sources, source.Id)
+	log.Println(context.subscription.Sources)
+
+	err := fb.SaveSubscription(context.account, context.subscription)
+
+	return err
+}
+
+func (context *Context) MarkItemsPosted(items []*Item) error {
+	return SharedFirebase().MarkItemsPosted(context.account, items)
+}
+
+// Handlers
+
+func (context *Context) HandleListCommand() string {
+	sources := make([]*Source, 0)
+	for _, source := range context.subscription.Sources {
+		sources = append(sources, source)
+	}
+
+	if len(sources) == 0 {
+		return `No source found`
+	}
+
+	var message string
+	for idx, source := range sources {
+		message += fmt.Sprintf("%d. [%s](%s) \n", idx+1, source.Title, source.Link)
+	}
+	return message
+}
+
+func (context *Context) HandleSubscribeCommand(args string) string {
 	if len(args) == 0 || !isValidURL(args) {
 		return `Please input a valid url.`
 	}
-	
-	if subscription, items, err := FetchSubscription(args); err != nil {
+
+	if channel, items, err := FetchChannel(args); err != nil {
 		return fmt.Sprintf(`%s`, err)
-	} else if err := context.SubscribeSubscription(subscription); err != nil {
+	} else if source, err := context.Subscribe(channel); err != nil {
 		return fmt.Sprintf(`%s`, err)
-	} else if err := context.EnqueueSubscription(subscription); err != nil {
+	} else if err := context.MarkItemsPosted(items); err != nil {
+		return fmt.Sprintf(`%s`, err)
+	} else if err := context.Observe(source); err != nil {
 		return fmt.Sprintf(`%s`, err)
 	} else {
 		if len(items) == 0 {
-			return fmt.Sprintf(`Subscription [%s](%s) added.`, subscription.title, subscription.link)
+			return fmt.Sprintf(`Channel [%s](%s) added.`, channel.title, channel.link)
 		} else {
-			return fmt.Sprintf(`Subscription [%s](%s) added.
+			return fmt.Sprintf(`Channel [%s](%s) added.
 			
-[%s](%s)`, subscription.title, subscription.link, items[0].title, items[0].link)
+[%s](%s)`, channel.title, channel.link, items[0].title, items[0].link)
 		}
 	}
 }
 
-func (context *Context) HandleUnsubscribeCommand(args string) (string) {
+func (context *Context) HandleUnsubscribeCommand(args string) string {
+	sources := make([]*Source, 0)
+	for _, source := range context.subscription.Sources {
+		sources = append(sources, source)
+	}
+
 	index, err := strconv.Atoi(args)
-	if err != nil || index <= 0 || index > len(context.monitors) {
+	if err != nil || index <= 0 || index > len(sources) {
 		return `Please input a valid index.`
 	}
 
 	index -= 1
 
-	subscription := context.monitors[index].subscription
+	source := sources[index]
 
-	if err := context.UnsubscribeSubscription(subscription); err != nil {
+	if err := context.Unsubscribe(source); err != nil {
 		return fmt.Sprintf(`%s`, err)
 	} else {
-		return fmt.Sprintf(`Subscrption %s deleted.`, subscription.title)
+		return fmt.Sprintf(`Subscrption %s deleted.`, source.Title)
 	}
 }

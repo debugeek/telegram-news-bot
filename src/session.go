@@ -1,15 +1,36 @@
 package main
 
 import (
-	"time"
 	"log"
-	"github.com/go-telegram-bot-api/telegram-bot-api"
+	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 )
 
 type Session struct {
-	bot *tgbotapi.BotAPI
-	token string
+	bot     *tgbotapi.BotAPI
+	token   string
 	handler func(s *Session, update tgbotapi.Update)
+}
+
+func SharedSession() *Session {
+	sessionOnce.Do(func() {
+		bot, err := tgbotapi.NewBotAPI(token)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		session = &Session{
+			token: token,
+			bot:   bot,
+		}
+	})
+	return session
+}
+
+func InitSession() {
+	SharedSession().Run()
+	log.Println(`Session initialized`)
 }
 
 func (session *Session) SetHandler(handler func(s *Session, update tgbotapi.Update)) {
@@ -17,6 +38,48 @@ func (session *Session) SetHandler(handler func(s *Session, update tgbotapi.Upda
 }
 
 func (session *Session) Run() {
+	session.SetHandler(func(s *Session, update tgbotapi.Update) {
+		log.Println(update.Message.Text)
+
+		id := update.Message.Chat.ID
+
+		context, err := NewContext(id)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		if update.Message.IsCommand() {
+			switch update.Message.Command() {
+			case "list":
+				{
+					response := context.HandleListCommand()
+					session.Reply(context.id, update.Message.MessageID, response)
+					break
+				}
+
+			case "add":
+				{
+					args := update.Message.CommandArguments()
+					response := context.HandleSubscribeCommand(args)
+					session.Reply(context.id, update.Message.MessageID, response)
+					break
+				}
+
+			case "delete":
+				{
+					args := update.Message.CommandArguments()
+					response := context.HandleUnsubscribeCommand(args)
+					session.Reply(context.id, update.Message.MessageID, response)
+					break
+				}
+
+			default:
+				break
+			}
+		}
+	})
+
 	go session.Schedule()
 }
 
@@ -42,15 +105,17 @@ func (session *Session) Schedule() {
 	}
 }
 
-func (session *Session) Send(chatID int64, message string) {
+func (session *Session) Send(chatID int64, message string) error {
 	msg := tgbotapi.NewMessage(chatID, message)
 	msg.ParseMode = "markdown"
-	session.bot.Send(msg)
+	_, err := session.bot.Send(msg)
+	return err
 }
 
-func (session *Session) Reply(chatID int64, replyToMessageID int, message string) {
+func (session *Session) Reply(chatID int64, replyToMessageID int, message string) error {
 	msg := tgbotapi.NewMessage(chatID, message)
 	msg.ParseMode = "markdown"
 	msg.ReplyToMessageID = replyToMessageID
-	session.bot.Send(msg)
+	_, err := session.bot.Send(msg)
+	return err
 }

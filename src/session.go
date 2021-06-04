@@ -51,6 +51,12 @@ func (session *Session) Run() {
 
 		if update.Message.IsCommand() {
 			switch update.Message.Command() {
+			case "start":
+				{
+					session.Send(context.id, "Greetings.")
+					break
+				}
+
 			case "list":
 				{
 					response := context.HandleListCommand()
@@ -74,6 +80,11 @@ func (session *Session) Run() {
 					break
 				}
 
+			case "statistic":
+				{
+					session.Reply(context.id, update.Message.MessageID, "To be continued")
+					break
+				}
 			default:
 				break
 			}

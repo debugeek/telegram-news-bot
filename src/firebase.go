@@ -126,7 +126,7 @@ func (fb Firebase) SaveSubscription(account *Account, subscription *Subscription
 	return err
 }
 
-func (fb Firebase) PostRecords(account *Account) (map[string]bool, error) {
+func (fb Firebase) GetPostRecords(account *Account) (map[string]bool, error) {
 	id := strconv.FormatInt(account.Id, 10)
 
 	var records map[string]bool
@@ -148,19 +148,10 @@ func (fb Firebase) PostRecords(account *Account) (map[string]bool, error) {
 	return records, nil
 }
 
-func (fb Firebase) MarkItemsPosted(account *Account, items []*Item) error {
-	records, err := fb.PostRecords(account)
-	if err != nil {
-		return err
-	}
-
-	for _, item := range items {
-		records[item.guid] = true
-	}
-
+func (fb Firebase) SetPostRecords(account *Account, records map[string]bool) error {
 	id := strconv.FormatInt(account.Id, 10)
 
-	_, err = fb.firestore.Collection("post_record").Doc(id).Set(fb.ctx, records)
+	_, err := fb.firestore.Collection("post_record").Doc(id).Set(fb.ctx, records)
 
 	return err
 }

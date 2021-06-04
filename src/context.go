@@ -91,13 +91,13 @@ func (context *Context) StartObserving(source *Source) error {
 				return
 			}
 
-			for _, item := range items {
-				records, err := SharedFirebase().PostRecords(context.account)
-				if err != nil {
-					log.Println(err)
-					return
-				}
+			records, err := SharedFirebase().GetPostRecords(context.account)
+			if err != nil {
+				log.Println(err)
+				return
+			}
 
+			for _, item := range items {
 				if records[item.guid] {
 					continue
 				}
@@ -108,9 +108,11 @@ func (context *Context) StartObserving(source *Source) error {
 					log.Println(err)
 					return
 				}
+
+				records[item.guid] = true
 			}
 
-			SharedFirebase().MarkItemsPosted(context.account, items)
+			SharedFirebase().SetPostRecords(context.account, records)
 		},
 	}
 	SharedMonitor().AddObserver(observer, source.Link)
@@ -157,7 +159,16 @@ func (context *Context) Unsubscribe(source *Source) error {
 }
 
 func (context *Context) MarkItemsPosted(items []*Item) error {
-	return SharedFirebase().MarkItemsPosted(context.account, items)
+	records, err := SharedFirebase().GetPostRecords(context.account)
+	if err != nil {
+		return err
+	}
+
+	for _, item := range items {
+		records[item.guid] = true
+	}
+
+	return SharedFirebase().SetPostRecords(context.account, records)
 }
 
 func (context *Context) GetSources() []*Source {
@@ -213,6 +224,27 @@ func (context *Context) HandleSubscribeCommand(args string) string {
 }
 
 func (context *Context) HandleUnsubscribeCommand(args string) string {
+	sources := context.GetSources()
+
+	index, err := strconv.Atoi(args)
+	if err != nil || index <= 0 || index > len(sources) {
+		return `Please input a valid index.`
+	}
+
+	index -= 1
+
+	source := sources[index]
+
+	if err := context.Unsubscribe(source); err != nil {
+		return fmt.Sprintf(`%s`, err)
+	} else if err := context.StopObserving(source); err != nil {
+		return fmt.Sprintf(`%s`, err)
+	} else {
+		return fmt.Sprintf(`Subscrption %s deleted.`, source.Title)
+	}
+}
+
+func (context *Context) HandleStatisticCommand(args string) string {
 	sources := context.GetSources()
 
 	index, err := strconv.Atoi(args)

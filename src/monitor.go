@@ -7,9 +7,14 @@ import (
 )
 
 type Monitor struct {
-	subjects map[string][]func(items []*Item)
-	ticker   *time.Ticker
-	quit     chan bool
+	observers map[string]map[int64]*Observer
+	ticker    *time.Ticker
+	quit      chan bool
+}
+
+type Observer struct {
+	identifier int64
+	handler    func(items []*Item)
 }
 
 func InitMonitor() {
@@ -20,23 +25,33 @@ func InitMonitor() {
 func SharedMonitor() *Monitor {
 	monitorOnce.Do(func() {
 		monitor = &Monitor{
-			subjects: make(map[string][]func(items []*Item)),
+			observers: make(map[string]map[int64]*Observer),
 		}
 	})
 	return monitor
 }
 
-func (monitor *Monitor) Observe(link string, handler func(items []*Item)) {
-	handlers := monitor.subjects[link]
-	if handlers == nil {
-		handlers = make([]func(items []*Item), 0)
-		monitor.subjects[link] = handlers
+func (monitor *Monitor) AddObserver(observer *Observer, link string) {
+	observers := monitor.observers[link]
+	if observers == nil {
+		observers = make(map[int64]*Observer)
+		monitor.observers[link] = observers
 	}
 
-	handlers = append(handlers, handler)
-	monitor.subjects[link] = handlers
+	observers[observer.identifier] = observer
+	monitor.observers[link] = observers
 
 	monitor.Pull()
+}
+
+func (monitor *Monitor) RemoveObserver(identifier int64, link string) {
+	observers := monitor.observers[link]
+	if observers == nil {
+		return
+	}
+
+	delete(observers, identifier)
+	monitor.observers[link] = observers
 }
 
 func (monitor *Monitor) Run() {
@@ -64,8 +79,8 @@ func (monitor *Monitor) Launch() {
 }
 
 func (monitor *Monitor) Pull() {
-	for link, handlers := range monitor.subjects {
-		if len(handlers) == 0 {
+	for link, observers := range monitor.observers {
+		if len(observers) == 0 {
 			continue
 		}
 
@@ -74,8 +89,11 @@ func (monitor *Monitor) Pull() {
 			continue
 		}
 
-		for _, handler := range handlers {
-			handler(items)
+		for _, observer := range observers {
+			if observer.handler == nil {
+				continue
+			}
+			observer.handler(items)
 		}
 	}
 

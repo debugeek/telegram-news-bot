@@ -6,9 +6,10 @@ type Account struct {
 }
 
 type Source struct {
-	Id    string `firestore:"id"`
-	Link  string `firestore:"link"`
-	Title string `firestore:"title"`
+	Id        string `firestore:"id"`
+	Link      string `firestore:"link"`
+	Title     string `firestore:"title"`
+	Timestamp int64  `firestore:"timestamp"`
 }
 
 type Subscription struct {

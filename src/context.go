@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -69,7 +71,7 @@ func NewContext(id int64) (*Context, error) {
 	}
 
 	for _, source := range subscription.Sources {
-		err = context.Observe(source)
+		err = context.StartObserving(source)
 		if err != nil {
 			return nil, err
 		}
@@ -81,33 +83,43 @@ func NewContext(id int64) (*Context, error) {
 	return context, nil
 }
 
-func (context *Context) Observe(source *Source) error {
-	SharedMonitor().Observe(source.Link, func(items []*Item) {
-		if len(items) == 0 {
-			return
-		}
-
-		for _, item := range items {
-			records, err := SharedFirebase().PostRecords(context.account)
-			if err != nil {
-				log.Println(err)
+func (context *Context) StartObserving(source *Source) error {
+	observer := &Observer{
+		identifier: context.id,
+		handler: func(items []*Item) {
+			if len(items) == 0 {
 				return
 			}
 
-			if records[item.guid] {
-				continue
+			for _, item := range items {
+				records, err := SharedFirebase().PostRecords(context.account)
+				if err != nil {
+					log.Println(err)
+					return
+				}
+
+				if records[item.guid] {
+					continue
+				}
+
+				msg := fmt.Sprintf("[%s](%s)", item.title, item.link)
+				err = session.Send(context.id, msg)
+				if err != nil {
+					log.Println(err)
+					return
+				}
 			}
 
-			msg := fmt.Sprintf("[%s](%s)", item.title, item.link)
-			err = session.Send(context.id, msg)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-		}
+			SharedFirebase().MarkItemsPosted(context.account, items)
+		},
+	}
+	SharedMonitor().AddObserver(observer, source.Link)
 
-		SharedFirebase().MarkItemsPosted(context.account, items)
-	})
+	return nil
+}
+
+func (context *Context) StopObserving(source *Source) error {
+	SharedMonitor().RemoveObserver(context.id, source.Link)
 
 	return nil
 }
@@ -121,9 +133,10 @@ func (context *Context) Subscribe(channel *Channel) (*Source, error) {
 	}
 
 	source = &Source{
-		Id:    id,
-		Link:  channel.link,
-		Title: channel.title,
+		Id:        id,
+		Link:      channel.link,
+		Title:     channel.title,
+		Timestamp: time.Now().Unix(),
 	}
 	context.subscription.Sources[id] = source
 
@@ -136,9 +149,7 @@ func (context *Context) Subscribe(channel *Channel) (*Source, error) {
 }
 
 func (context *Context) Unsubscribe(source *Source) error {
-	log.Println(context.subscription.Sources)
 	delete(context.subscription.Sources, source.Id)
-	log.Println(context.subscription.Sources)
 
 	err := fb.SaveSubscription(context.account, context.subscription)
 
@@ -149,14 +160,23 @@ func (context *Context) MarkItemsPosted(items []*Item) error {
 	return SharedFirebase().MarkItemsPosted(context.account, items)
 }
 
-// Handlers
-
-func (context *Context) HandleListCommand() string {
+func (context *Context) GetSources() []*Source {
 	sources := make([]*Source, 0)
 	for _, source := range context.subscription.Sources {
 		sources = append(sources, source)
 	}
 
+	sort.SliceStable(sources, func(i, j int) bool {
+		return sources[i].Timestamp < sources[j].Timestamp
+	})
+
+	return sources
+}
+
+// Handlers
+
+func (context *Context) HandleListCommand() string {
+	sources := context.GetSources()
 	if len(sources) == 0 {
 		return `No source found`
 	}
@@ -179,7 +199,7 @@ func (context *Context) HandleSubscribeCommand(args string) string {
 		return fmt.Sprintf(`%s`, err)
 	} else if err := context.MarkItemsPosted(items); err != nil {
 		return fmt.Sprintf(`%s`, err)
-	} else if err := context.Observe(source); err != nil {
+	} else if err := context.StartObserving(source); err != nil {
 		return fmt.Sprintf(`%s`, err)
 	} else {
 		if len(items) == 0 {
@@ -193,10 +213,7 @@ func (context *Context) HandleSubscribeCommand(args string) string {
 }
 
 func (context *Context) HandleUnsubscribeCommand(args string) string {
-	sources := make([]*Source, 0)
-	for _, source := range context.subscription.Sources {
-		sources = append(sources, source)
-	}
+	sources := context.GetSources()
 
 	index, err := strconv.Atoi(args)
 	if err != nil || index <= 0 || index > len(sources) {
@@ -208,6 +225,8 @@ func (context *Context) HandleUnsubscribeCommand(args string) string {
 	source := sources[index]
 
 	if err := context.Unsubscribe(source); err != nil {
+		return fmt.Sprintf(`%s`, err)
+	} else if err := context.StopObserving(source); err != nil {
 		return fmt.Sprintf(`%s`, err)
 	} else {
 		return fmt.Sprintf(`Subscrption %s deleted.`, source.Title)

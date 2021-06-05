@@ -126,32 +126,41 @@ func (fb Firebase) SaveSubscription(account *Account, subscription *Subscription
 	return err
 }
 
-func (fb Firebase) GetPostRecords(account *Account) (map[string]bool, error) {
+func (fb Firebase) GetItemPushed(account *Account, itemId string) (bool, error) {
 	id := strconv.FormatInt(account.Id, 10)
 
-	var records map[string]bool
-
-	dsnap, err := fb.firestore.Collection("post_record").Doc(id).Get(fb.ctx)
+	dsnap, err := fb.firestore.Collection("history").Doc(id).Collection("feed").Doc(itemId).Get(fb.ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			records = make(map[string]bool)
+			return false, nil
 		} else {
-			return nil, err
+			return false, err
 		}
 	} else {
-		err = dsnap.DataTo(&records)
+		var results map[string]interface{}
+		err = dsnap.DataTo(&results)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-	}
 
-	return records, nil
+		var pushed bool = (results["pushed"]).(bool)
+		return pushed, nil
+	}
 }
 
-func (fb Firebase) SetPostRecords(account *Account, records map[string]bool) error {
+func (fb Firebase) SetItemsPushed(account *Account, itemIds []string) error {
 	id := strconv.FormatInt(account.Id, 10)
 
-	_, err := fb.firestore.Collection("post_record").Doc(id).Set(fb.ctx, records)
+	batch := fb.firestore.Batch()
+
+	for _, itemId := range itemIds {
+		ref := fb.firestore.Collection("history").Doc(id).Collection("feed").Doc(itemId)
+		batch.Set(ref, map[string]interface{}{
+			"pushed": true,
+		}, firestore.MergeAll)
+	}
+
+	_, err := batch.Commit(fb.ctx)
 
 	return err
 }

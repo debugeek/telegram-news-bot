@@ -24,7 +24,7 @@ type Channel struct {
 }
 
 type Item struct {
-	guid  string
+	id    string
 	title string
 	link  string
 }

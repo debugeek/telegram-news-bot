@@ -37,7 +37,7 @@ func FetchChannel(url string) (*Channel, []*Item, error) {
 	for index := len(feed.Items) - 1; index >= 0; index-- {
 		item := feed.Items[index]
 		items = append(items, &Item{
-			guid:  item.GUID,
+			id:    fmt.Sprintf("%x", md5.Sum([]byte(item.GUID))),
 			title: item.Title,
 			link:  item.Link,
 		})
@@ -68,7 +68,7 @@ func FetchItems(url string) ([]*Item, error) {
 	for index := len(feed.Items) - 1; index >= 0; index-- {
 		item := feed.Items[index]
 		items = append(items, &Item{
-			guid:  item.GUID,
+			id:    fmt.Sprintf("%x", md5.Sum([]byte(item.GUID))),
 			title: item.Title,
 			link:  item.Link,
 		})

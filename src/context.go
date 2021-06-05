@@ -91,14 +91,15 @@ func (context *Context) StartObserving(source *Source) error {
 				return
 			}
 
-			records, err := SharedFirebase().GetPostRecords(context.account)
-			if err != nil {
-				log.Println(err)
-				return
-			}
+			itemIds := make([]string, 0)
 
 			for _, item := range items {
-				if records[item.guid] {
+				pushed, err := SharedFirebase().GetItemPushed(context.account, item.id)
+				if pushed {
+					continue
+				}
+				if err != nil {
+					log.Println(err)
 					continue
 				}
 
@@ -109,10 +110,10 @@ func (context *Context) StartObserving(source *Source) error {
 					return
 				}
 
-				records[item.guid] = true
+				itemIds = append(itemIds, item.id)
 			}
 
-			SharedFirebase().SetPostRecords(context.account, records)
+			SharedFirebase().SetItemsPushed(context.account, itemIds)
 		},
 	}
 	SharedMonitor().AddObserver(observer, source.Link)
@@ -158,17 +159,12 @@ func (context *Context) Unsubscribe(source *Source) error {
 	return err
 }
 
-func (context *Context) MarkItemsPosted(items []*Item) error {
-	records, err := SharedFirebase().GetPostRecords(context.account)
-	if err != nil {
-		return err
-	}
-
+func (context *Context) SetItemsPushed(items []*Item) error {
+	itemIds := make([]string, 0)
 	for _, item := range items {
-		records[item.guid] = true
+		itemIds = append(itemIds, item.id)
 	}
-
-	return SharedFirebase().SetPostRecords(context.account, records)
+	return SharedFirebase().SetItemsPushed(context.account, itemIds)
 }
 
 func (context *Context) GetSources() []*Source {
@@ -208,7 +204,7 @@ func (context *Context) HandleSubscribeCommand(args string) string {
 		return fmt.Sprintf(`%s`, err)
 	} else if source, err := context.Subscribe(channel); err != nil {
 		return fmt.Sprintf(`%s`, err)
-	} else if err := context.MarkItemsPosted(items); err != nil {
+	} else if err := context.SetItemsPushed(items); err != nil {
 		return fmt.Sprintf(`%s`, err)
 	} else if err := context.StartObserving(source); err != nil {
 		return fmt.Sprintf(`%s`, err)

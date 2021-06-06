@@ -22,7 +22,7 @@ func InitContents() error {
 	}
 
 	for _, account := range accounts {
-		_, err := NewContext(account.Id)
+		_, err := NewContext(account.Id, account.Kind)
 		if err != nil {
 			return err
 		}
@@ -31,7 +31,7 @@ func InitContents() error {
 	return nil
 }
 
-func NewContext(id int64) (*Context, error) {
+func NewContext(id int64, kind int) (*Context, error) {
 	context := contexts[id]
 	if context != nil {
 		return context, nil
@@ -44,7 +44,7 @@ func NewContext(id int64) (*Context, error) {
 	if account == nil {
 		account = &Account{
 			Id:   id,
-			kind: 0,
+			Kind: kind,
 		}
 		err = SharedFirebase().SaveAccount(account)
 		if err != nil {

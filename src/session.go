@@ -43,7 +43,16 @@ func (session *Session) Run() {
 
 		id := update.Message.Chat.ID
 
-		context, err := NewContext(id)
+		kind := 0
+		if update.Message.Chat.IsPrivate() {
+			kind = 0
+		} else if update.Message.Chat.IsGroup() || update.Message.Chat.IsSuperGroup() {
+			kind = 1
+		} else if update.Message.Chat.IsChannel() {
+			kind = 2
+		}
+
+		context, err := NewContext(id, kind)
 		if err != nil {
 			log.Println(err)
 			return

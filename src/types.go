@@ -2,7 +2,7 @@ package main
 
 type Account struct {
 	Id   int64 `firestore:"id"`
-	kind int   `firestore:"kind"`
+	Kind int   `firestore:"kind"`
 }
 
 type Subscription struct {

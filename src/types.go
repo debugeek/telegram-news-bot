@@ -5,15 +5,11 @@ type Account struct {
 	kind int   `firestore:"kind"`
 }
 
-type Source struct {
+type Subscription struct {
 	Id        string `firestore:"id"`
 	Link      string `firestore:"link"`
 	Title     string `firestore:"title"`
 	Timestamp int64  `firestore:"timestamp"`
-}
-
-type Subscription struct {
-	Sources map[string]*Source `firestore:"sources"`
 }
 
 type Channel struct {
@@ -27,4 +23,9 @@ type Item struct {
 	id    string
 	title string
 	link  string
+}
+
+type SubscriptionStatistic struct {
+	Count        int64         `firestore:"count"`
+	Subscription *Subscription `firestore:"subscription"`
 }

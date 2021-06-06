@@ -55,7 +55,7 @@ func SharedFirebase() Firebase {
 func (fb Firebase) GetAccounts() ([]*Account, error) {
 	accounts := make([]*Account, 0)
 
-	iter := fb.firestore.Collection("account").Documents(fb.ctx)
+	iter := fb.firestore.Collection("accounts").Documents(fb.ctx)
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
@@ -75,7 +75,7 @@ func (fb Firebase) GetAccounts() ([]*Account, error) {
 }
 
 func (fb Firebase) GetAccount(id int64) (*Account, error) {
-	iter := fb.firestore.Collection("account").Where("id", "==", id).Documents(fb.ctx)
+	iter := fb.firestore.Collection("accounts").Where("id", "==", id).Documents(fb.ctx)
 
 	doc, err := iter.Next()
 	if err == iterator.Done {
@@ -94,34 +94,124 @@ func (fb Firebase) GetAccount(id int64) (*Account, error) {
 func (fb Firebase) SaveAccount(account *Account) error {
 	id := strconv.FormatInt(account.Id, 10)
 
-	_, err := fb.firestore.Collection("account").Doc(id).Set(fb.ctx, account)
+	_, err := fb.firestore.Collection("accounts").Doc(id).Set(fb.ctx, account)
 
 	return err
 }
 
 // Subscription
 
-func (fb Firebase) GetSubscription(account *Account) (*Subscription, error) {
+func (fb Firebase) GetSubscriptions(account *Account) (map[string]*Subscription, error) {
 	id := strconv.FormatInt(account.Id, 10)
 
-	dsnap, err := fb.firestore.Collection("subscription").Doc(id).Get(fb.ctx)
-	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			return nil, nil
-		} else {
+	subscriptions := make(map[string]*Subscription)
+
+	iter := fb.firestore.Collection("assets").Doc(id).Collection("subscriptions").Documents(fb.ctx)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
 			return nil, err
 		}
+
+		var subscription Subscription
+		err = doc.DataTo(&subscription)
+		if err != nil {
+			return nil, err
+		}
+
+		subscriptions[doc.Ref.ID] = &subscription
 	}
 
-	var subscription Subscription
-	err = dsnap.DataTo(&subscription)
-	return &subscription, err
+	return subscriptions, nil
 }
 
-func (fb Firebase) SaveSubscription(account *Account, subscription *Subscription) error {
+func (fb Firebase) AddSubscription(account *Account, subscription *Subscription) error {
 	id := strconv.FormatInt(account.Id, 10)
 
-	_, err := fb.firestore.Collection("subscription").Doc(id).Set(fb.ctx, subscription)
+	subscriptionRef := fb.firestore.Collection("assets").Doc(id).Collection("subscriptions").Doc(subscription.Id)
+	statisticRef := fb.firestore.Collection("statistics").Doc("subscriptions").Collection("subscribe_count").Doc(subscription.Id)
+
+	err := fb.firestore.RunTransaction(fb.ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		var statistic SubscriptionStatistic
+
+		doc, err := tx.Get(statisticRef)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				statistic = SubscriptionStatistic{
+					Count:        0,
+					Subscription: subscription,
+				}
+			} else {
+				return err
+			}
+		} else {
+			doc.DataTo(&statistic)
+		}
+
+		statistic.Count++
+
+		err = tx.Set(statisticRef, statistic)
+		if err != nil {
+			return err
+		}
+
+		err = tx.Set(subscriptionRef, subscription)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	return err
+}
+
+func (fb Firebase) DeleteSubscription(account *Account, subscription *Subscription) error {
+	id := strconv.FormatInt(account.Id, 10)
+
+	subscriptionRef := fb.firestore.Collection("assets").Doc(id).Collection("subscriptions").Doc(subscription.Id)
+	statisticRef := fb.firestore.Collection("statistics").Doc("subscriptions").Collection("subscribe_count").Doc(subscription.Id)
+
+	err := fb.firestore.RunTransaction(fb.ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		var statistic SubscriptionStatistic
+
+		doc, err := tx.Get(statisticRef)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				statistic = SubscriptionStatistic{
+					Count:        0,
+					Subscription: subscription,
+				}
+			} else {
+				return err
+			}
+		} else {
+			doc.DataTo(&statistic)
+		}
+
+		statistic.Count--
+
+		if statistic.Count <= 0 {
+			err = tx.Delete(statisticRef)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = tx.Set(statisticRef, statistic)
+			if err != nil {
+				return err
+			}
+		}
+
+		err = tx.Delete(subscriptionRef)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 
 	return err
 }
@@ -129,7 +219,7 @@ func (fb Firebase) SaveSubscription(account *Account, subscription *Subscription
 func (fb Firebase) GetItemPushed(account *Account, itemId string) (bool, error) {
 	id := strconv.FormatInt(account.Id, 10)
 
-	dsnap, err := fb.firestore.Collection("history").Doc(id).Collection("feed").Doc(itemId).Get(fb.ctx)
+	dsnap, err := fb.firestore.Collection("assets").Doc(id).Collection("feeds").Doc(itemId).Get(fb.ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return false, nil
@@ -154,7 +244,7 @@ func (fb Firebase) SetItemsPushed(account *Account, itemIds []string) error {
 	batch := fb.firestore.Batch()
 
 	for _, itemId := range itemIds {
-		ref := fb.firestore.Collection("history").Doc(id).Collection("feed").Doc(itemId)
+		ref := fb.firestore.Collection("assets").Doc(id).Collection("feeds").Doc(itemId)
 		batch.Set(ref, map[string]interface{}{
 			"pushed": true,
 		}, firestore.MergeAll)
@@ -163,4 +253,38 @@ func (fb Firebase) SetItemsPushed(account *Account, itemIds []string) error {
 	_, err := batch.Commit(fb.ctx)
 
 	return err
+}
+
+func (fb Firebase) GetTopSubscriptions(num int) ([]*SubscriptionStatistic, error) {
+	statistics := make([]*SubscriptionStatistic, 0)
+
+	err := fb.firestore.RunTransaction(fb.ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		querier := fb.firestore.Collection("statistics").Doc("subscriptions").Collection("subscribe_count").OrderBy("count", firestore.Desc).Limit(num)
+		iter := tx.Documents(querier)
+		for {
+			doc, err := iter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return err
+			}
+
+			var statistic SubscriptionStatistic
+			err = doc.DataTo(&statistic)
+			if err != nil {
+				return err
+			}
+
+			statistics = append(statistics, &statistic)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return statistics, nil
 }

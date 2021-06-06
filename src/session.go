@@ -82,7 +82,9 @@ func (session *Session) Run() {
 
 			case "statistic":
 				{
-					session.Reply(context.id, update.Message.MessageID, "To be continued")
+					args := update.Message.CommandArguments()
+					response := context.HandleStatisticCommand(args)
+					session.Reply(context.id, update.Message.MessageID, response)
 					break
 				}
 			default:

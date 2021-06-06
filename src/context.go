@@ -11,9 +11,9 @@ import (
 )
 
 type Context struct {
-	id           int64
-	account      *Account
-	subscription *Subscription
+	id            int64
+	account       *Account
+	subscriptions map[string]*Subscription
 }
 
 func InitContents() error {
@@ -53,29 +53,25 @@ func NewContext(id int64) (*Context, error) {
 		}
 	}
 
-	subscription, err := SharedFirebase().GetSubscription(account)
+	subscriptions, err := SharedFirebase().GetSubscriptions(account)
 	if err != nil {
 		return nil, err
 	}
-	if subscription == nil {
-		subscription = &Subscription{
-			Sources: make(map[string]*Source),
-		}
-		SharedFirebase().SaveSubscription(account, subscription)
+	if subscriptions == nil {
+		subscriptions = make(map[string]*Subscription)
 	}
 
 	context = &Context{
-		id:           id,
-		account:      account,
-		subscription: subscription,
+		id:            id,
+		account:       account,
+		subscriptions: subscriptions,
 	}
 
-	for _, source := range subscription.Sources {
-		err = context.StartObserving(source)
+	for _, subscription := range subscriptions {
+		err = context.StartObserving(subscription)
 		if err != nil {
 			return nil, err
 		}
-		context.subscription.Sources[source.Id] = source
 	}
 
 	contexts[account.Id] = context
@@ -83,7 +79,7 @@ func NewContext(id int64) (*Context, error) {
 	return context, nil
 }
 
-func (context *Context) StartObserving(source *Source) error {
+func (context *Context) StartObserving(subscription *Subscription) error {
 	observer := &Observer{
 		identifier: context.id,
 		handler: func(items []*Item) {
@@ -116,45 +112,45 @@ func (context *Context) StartObserving(source *Source) error {
 			SharedFirebase().SetItemsPushed(context.account, itemIds)
 		},
 	}
-	SharedMonitor().AddObserver(observer, source.Link)
+	SharedMonitor().AddObserver(observer, subscription.Link)
 
 	return nil
 }
 
-func (context *Context) StopObserving(source *Source) error {
-	SharedMonitor().RemoveObserver(context.id, source.Link)
+func (context *Context) StopObserving(subscription *Subscription) error {
+	SharedMonitor().RemoveObserver(context.id, subscription.Link)
 
 	return nil
 }
 
-func (context *Context) Subscribe(channel *Channel) (*Source, error) {
+func (context *Context) Subscribe(channel *Channel) (*Subscription, error) {
 	id := channel.id
 
-	source := context.subscription.Sources[id]
-	if source != nil {
-		return nil, fmt.Errorf(`Source [%s](%s) exists`, source.Title, source.Link)
+	subscription := context.subscriptions[id]
+	if subscription != nil {
+		return nil, fmt.Errorf(`Subscription [%s](%s) exists`, subscription.Title, subscription.Link)
 	}
 
-	source = &Source{
+	subscription = &Subscription{
 		Id:        id,
 		Link:      channel.link,
 		Title:     channel.title,
 		Timestamp: time.Now().Unix(),
 	}
-	context.subscription.Sources[id] = source
+	context.subscriptions[id] = subscription
 
-	err := fb.SaveSubscription(context.account, context.subscription)
+	err := fb.AddSubscription(context.account, subscription)
 	if err != nil {
 		return nil, err
 	}
 
-	return source, nil
+	return subscription, nil
 }
 
-func (context *Context) Unsubscribe(source *Source) error {
-	delete(context.subscription.Sources, source.Id)
+func (context *Context) Unsubscribe(subscription *Subscription) error {
+	delete(context.subscriptions, subscription.Id)
 
-	err := fb.SaveSubscription(context.account, context.subscription)
+	err := fb.DeleteSubscription(context.account, subscription)
 
 	return err
 }
@@ -167,30 +163,30 @@ func (context *Context) SetItemsPushed(items []*Item) error {
 	return SharedFirebase().SetItemsPushed(context.account, itemIds)
 }
 
-func (context *Context) GetSources() []*Source {
-	sources := make([]*Source, 0)
-	for _, source := range context.subscription.Sources {
-		sources = append(sources, source)
+func (context *Context) GetSubscriptions() []*Subscription {
+	subscriptions := make([]*Subscription, 0)
+	for _, subscription := range context.subscriptions {
+		subscriptions = append(subscriptions, subscription)
 	}
 
-	sort.SliceStable(sources, func(i, j int) bool {
-		return sources[i].Timestamp < sources[j].Timestamp
+	sort.SliceStable(subscriptions, func(i, j int) bool {
+		return subscriptions[i].Timestamp < subscriptions[j].Timestamp
 	})
 
-	return sources
+	return subscriptions
 }
 
 // Handlers
 
 func (context *Context) HandleListCommand() string {
-	sources := context.GetSources()
-	if len(sources) == 0 {
-		return `No source found`
+	subscriptions := context.GetSubscriptions()
+	if len(subscriptions) == 0 {
+		return `No subscription found`
 	}
 
 	var message string
-	for idx, source := range sources {
-		message += fmt.Sprintf("%d. [%s](%s) \n", idx+1, source.Title, source.Link)
+	for idx, subscription := range subscriptions {
+		message += fmt.Sprintf("%d. [%s](%s) \n", idx+1, subscription.Title, subscription.Link)
 	}
 	return message
 }
@@ -202,11 +198,11 @@ func (context *Context) HandleSubscribeCommand(args string) string {
 
 	if channel, items, err := FetchChannel(args); err != nil {
 		return fmt.Sprintf(`%s`, err)
-	} else if source, err := context.Subscribe(channel); err != nil {
+	} else if subscription, err := context.Subscribe(channel); err != nil {
 		return fmt.Sprintf(`%s`, err)
 	} else if err := context.SetItemsPushed(items); err != nil {
 		return fmt.Sprintf(`%s`, err)
-	} else if err := context.StartObserving(source); err != nil {
+	} else if err := context.StartObserving(subscription); err != nil {
 		return fmt.Sprintf(`%s`, err)
 	} else {
 		if len(items) == 0 {
@@ -220,43 +216,37 @@ func (context *Context) HandleSubscribeCommand(args string) string {
 }
 
 func (context *Context) HandleUnsubscribeCommand(args string) string {
-	sources := context.GetSources()
+	subscriptions := context.GetSubscriptions()
 
 	index, err := strconv.Atoi(args)
-	if err != nil || index <= 0 || index > len(sources) {
+	if err != nil || index <= 0 || index > len(subscriptions) {
 		return `Please input a valid index.`
 	}
 
 	index -= 1
 
-	source := sources[index]
+	subscription := subscriptions[index]
 
-	if err := context.Unsubscribe(source); err != nil {
+	if err := context.Unsubscribe(subscription); err != nil {
 		return fmt.Sprintf(`%s`, err)
-	} else if err := context.StopObserving(source); err != nil {
+	} else if err := context.StopObserving(subscription); err != nil {
 		return fmt.Sprintf(`%s`, err)
 	} else {
-		return fmt.Sprintf(`Subscrption %s deleted.`, source.Title)
+		return fmt.Sprintf(`Subscrption %s deleted.`, subscription.Title)
 	}
 }
 
 func (context *Context) HandleStatisticCommand(args string) string {
-	sources := context.GetSources()
-
-	index, err := strconv.Atoi(args)
-	if err != nil || index <= 0 || index > len(sources) {
-		return `Please input a valid index.`
-	}
-
-	index -= 1
-
-	source := sources[index]
-
-	if err := context.Unsubscribe(source); err != nil {
+	if statistics, err := SharedFirebase().GetTopSubscriptions(5); err != nil {
 		return fmt.Sprintf(`%s`, err)
-	} else if err := context.StopObserving(source); err != nil {
-		return fmt.Sprintf(`%s`, err)
+	} else if len(statistics) == 0 {
+		return "Insufficient data."
 	} else {
-		return fmt.Sprintf(`Subscrption %s deleted.`, source.Title)
+		var message string
+		for idx, statistic := range statistics {
+			message += fmt.Sprintf("%d. [%s](%s) (%d)\n", idx+1, statistic.Subscription.Title, statistic.Subscription.Link, statistic.Count)
+		}
+		return message
 	}
+
 }

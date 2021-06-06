@@ -64,7 +64,7 @@ func (session *Session) Run() {
 					break
 				}
 
-			case "add":
+			case "add", "subscribe":
 				{
 					args := update.Message.CommandArguments()
 					response := context.HandleSubscribeCommand(args)
@@ -72,7 +72,7 @@ func (session *Session) Run() {
 					break
 				}
 
-			case "delete":
+			case "delete", "unsubscribe":
 				{
 					args := update.Message.CommandArguments()
 					response := context.HandleUnsubscribeCommand(args)
@@ -80,10 +80,10 @@ func (session *Session) Run() {
 					break
 				}
 
-			case "statistic":
+			case "hot", "top":
 				{
 					args := update.Message.CommandArguments()
-					response := context.HandleStatisticCommand(args)
+					response := context.HandleHotCommand(args)
 					session.Reply(context.id, update.Message.MessageID, response)
 					break
 				}

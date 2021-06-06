@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strconv"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -174,79 +173,4 @@ func (context *Context) GetSubscriptions() []*Subscription {
 	})
 
 	return subscriptions
-}
-
-// Handlers
-
-func (context *Context) HandleListCommand() string {
-	subscriptions := context.GetSubscriptions()
-	if len(subscriptions) == 0 {
-		return `No subscription found`
-	}
-
-	var message string
-	for idx, subscription := range subscriptions {
-		message += fmt.Sprintf("%d. [%s](%s) \n", idx+1, subscription.Title, subscription.Link)
-	}
-	return message
-}
-
-func (context *Context) HandleSubscribeCommand(args string) string {
-	if len(args) == 0 || !isValidURL(args) {
-		return `Please input a valid url.`
-	}
-
-	if channel, items, err := FetchChannel(args); err != nil {
-		return fmt.Sprintf(`%s`, err)
-	} else if subscription, err := context.Subscribe(channel); err != nil {
-		return fmt.Sprintf(`%s`, err)
-	} else if err := context.SetItemsPushed(items); err != nil {
-		return fmt.Sprintf(`%s`, err)
-	} else if err := context.StartObserving(subscription); err != nil {
-		return fmt.Sprintf(`%s`, err)
-	} else {
-		if len(items) == 0 {
-			return fmt.Sprintf(`Channel [%s](%s) added.`, channel.title, channel.link)
-		} else {
-			return fmt.Sprintf(`Channel [%s](%s) added.
-			
-[%s](%s)`, channel.title, channel.link, items[0].title, items[0].link)
-		}
-	}
-}
-
-func (context *Context) HandleUnsubscribeCommand(args string) string {
-	subscriptions := context.GetSubscriptions()
-
-	index, err := strconv.Atoi(args)
-	if err != nil || index <= 0 || index > len(subscriptions) {
-		return `Please input a valid index.`
-	}
-
-	index -= 1
-
-	subscription := subscriptions[index]
-
-	if err := context.Unsubscribe(subscription); err != nil {
-		return fmt.Sprintf(`%s`, err)
-	} else if err := context.StopObserving(subscription); err != nil {
-		return fmt.Sprintf(`%s`, err)
-	} else {
-		return fmt.Sprintf(`Subscrption %s deleted.`, subscription.Title)
-	}
-}
-
-func (context *Context) HandleStatisticCommand(args string) string {
-	if statistics, err := SharedFirebase().GetTopSubscriptions(5); err != nil {
-		return fmt.Sprintf(`%s`, err)
-	} else if len(statistics) == 0 {
-		return "Insufficient data."
-	} else {
-		var message string
-		for idx, statistic := range statistics {
-			message += fmt.Sprintf("%d. [%s](%s) (%d)\n", idx+1, statistic.Subscription.Title, statistic.Subscription.Link, statistic.Count)
-		}
-		return message
-	}
-
 }

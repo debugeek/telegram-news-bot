@@ -29,7 +29,7 @@ func (context *Context) HandleSubscribeCommand(args string) string {
 		return `Fetch error.`
 	} else if subscription, err := context.Subscribe(channel); err != nil {
 		return `Subscribe failed.`
-	} else if err := context.SetItemsPushed(items); err != nil {
+	} else if err := context.SetItemsPushed(subscription, items); err != nil {
 		return `Subscribe failed.`
 	} else if err := context.StartObserving(subscription); err != nil {
 		return `Subscribe failed.`
@@ -69,7 +69,7 @@ func (context *Context) HandleUnsubscribeCommand(args string) string {
 
 func (context *Context) HandleHotCommand(args string) string {
 	if statistics, err := SharedFirebase().GetTopSubscriptions(5); err != nil {
-		return `Oops, something wrong happend.`
+		return `Oops, something wrong happened.`
 	} else if len(statistics) == 0 {
 		return "Not enough data."
 	} else {

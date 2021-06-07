@@ -13,6 +13,7 @@ type Context struct {
 	id            int64
 	account       *Account
 	subscriptions map[string]*Subscription
+	caches        map[string]map[string]interface{}
 }
 
 func InitContents() error {
@@ -37,6 +38,12 @@ func NewContext(id int64, kind int) (*Context, error) {
 		return context, nil
 	}
 
+	context = &Context{
+		id:            id,
+		subscriptions: make(map[string]*Subscription),
+		caches:        make(map[string]map[string]interface{}),
+	}
+
 	account, err := SharedFirebase().GetAccount(id)
 	if err != nil {
 		return nil, err
@@ -51,22 +58,23 @@ func NewContext(id int64, kind int) (*Context, error) {
 			return nil, err
 		}
 	}
+	context.account = account
 
-	subscriptions, err := SharedFirebase().GetSubscriptions(account)
-	if err != nil {
+	if subscriptions, err := SharedFirebase().GetSubscriptions(account); err != nil {
 		return nil, err
-	}
-	if subscriptions == nil {
-		subscriptions = make(map[string]*Subscription)
+	} else {
+		for id, subscription := range subscriptions {
+			context.subscriptions[id] = subscription
+
+			cache, err := SharedFirebase().GetFeedCache(account, subscription)
+			if err != nil {
+				return nil, err
+			}
+			context.caches[id] = cache
+		}
 	}
 
-	context = &Context{
-		id:            id,
-		account:       account,
-		subscriptions: subscriptions,
-	}
-
-	for _, subscription := range subscriptions {
+	for _, subscription := range context.subscriptions {
 		err = context.StartObserving(subscription)
 		if err != nil {
 			return nil, err
@@ -81,34 +89,47 @@ func NewContext(id int64, kind int) (*Context, error) {
 func (context *Context) StartObserving(subscription *Subscription) error {
 	observer := &Observer{
 		identifier: context.id,
-		handler: func(items []*Item) {
+		handler: func(items map[string]*Item) {
 			if len(items) == 0 {
 				return
 			}
 
-			itemIds := make([]string, 0)
+			old := make(map[string]interface{})
+			new := make(map[string]interface{})
 
-			for _, item := range items {
-				pushed, err := SharedFirebase().GetItemPushed(context.account, item.id)
-				if pushed {
-					continue
+			for id, cache := range context.caches[subscription.Id] {
+				if items[id] == nil {
+					old[id] = cache
 				}
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				msg := fmt.Sprintf("[%s](%s)", item.title, item.link)
-				err = session.Send(context.id, msg)
-				if err != nil {
-					log.Println(err)
-					return
-				}
-
-				itemIds = append(itemIds, item.id)
 			}
 
-			SharedFirebase().SetItemsPushed(context.account, itemIds)
+			for _, item := range items {
+				if context.caches[subscription.Id][item.id] == nil {
+					new[item.id] = map[string]interface{}{
+						"pushed":    true,
+						"timestamp": time.Now().Unix(),
+					}
+
+					msg := fmt.Sprintf("[%s](%s)", item.title, item.link)
+					err := session.Send(context.id, msg)
+					if err != nil {
+						log.Println(err)
+						return
+					}
+				}
+			}
+
+			if len(new) == 0 && len(old) == 0 {
+				return
+			}
+
+			for id := range old {
+				delete(context.caches[subscription.Id], id)
+			}
+			for id, cache := range new {
+				context.caches[subscription.Id][id] = cache
+			}
+			SharedFirebase().SetFeedCache(context.account, subscription, context.caches[subscription.Id])
 		},
 	}
 	SharedMonitor().AddObserver(observer, subscription.Link)
@@ -138,6 +159,8 @@ func (context *Context) Subscribe(channel *Channel) (*Subscription, error) {
 	}
 	context.subscriptions[id] = subscription
 
+	context.caches[id] = make(map[string]interface{})
+
 	err := fb.AddSubscription(context.account, subscription)
 	if err != nil {
 		return nil, err
@@ -147,19 +170,30 @@ func (context *Context) Subscribe(channel *Channel) (*Subscription, error) {
 }
 
 func (context *Context) Unsubscribe(subscription *Subscription) error {
+	err := fb.DeleteSubscription(context.account, subscription)
+	if err != nil {
+		return err
+	}
 	delete(context.subscriptions, subscription.Id)
 
-	err := fb.DeleteSubscription(context.account, subscription)
+	err = fb.DeleteFeedCache(context.account, subscription)
+	if err != nil {
+		return err
+	}
+	delete(context.caches, subscription.Id)
 
 	return err
 }
 
-func (context *Context) SetItemsPushed(items []*Item) error {
-	itemIds := make([]string, 0)
+func (context *Context) SetItemsPushed(subscription *Subscription, items []*Item) error {
 	for _, item := range items {
-		itemIds = append(itemIds, item.id)
+		context.caches[subscription.Id][item.id] = map[string]interface{}{
+			"pushed":    true,
+			"timestamp": time.Now().Unix(),
+		}
 	}
-	return SharedFirebase().SetItemsPushed(context.account, itemIds)
+
+	return SharedFirebase().SetFeedCache(context.account, subscription, context.caches[subscription.Id])
 }
 
 func (context *Context) GetSubscriptions() []*Subscription {

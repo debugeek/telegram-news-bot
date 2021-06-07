@@ -14,7 +14,7 @@ type Monitor struct {
 
 type Observer struct {
 	identifier int64
-	handler    func(items []*Item)
+	handler    func(items map[string]*Item)
 }
 
 func InitMonitor() {

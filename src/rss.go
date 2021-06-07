@@ -46,7 +46,7 @@ func FetchChannel(url string) (*Channel, []*Item, error) {
 	return channel, items, nil
 }
 
-func FetchItems(url string) ([]*Item, error) {
+func FetchItems(url string) (map[string]*Item, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -64,14 +64,16 @@ func FetchItems(url string) ([]*Item, error) {
 		return nil, err
 	}
 
-	var items []*Item
+	items := make(map[string]*Item)
+
 	for index := len(feed.Items) - 1; index >= 0; index-- {
 		item := feed.Items[index]
-		items = append(items, &Item{
+		id := fmt.Sprintf("%x", md5.Sum([]byte(item.GUID)))
+		items[id] = &Item{
 			id:    fmt.Sprintf("%x", md5.Sum([]byte(item.GUID))),
 			title: item.Title,
 			link:  item.Link,
-		})
+		}
 	}
 
 	return items, nil

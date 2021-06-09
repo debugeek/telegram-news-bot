@@ -128,20 +128,19 @@ func (fb Firebase) DeleteSubscription(account *Account, subscription *Subscripti
 func (fb Firebase) GetFeedCache(account *Account, subscription *Subscription) (map[string]interface{}, error) {
 	id := strconv.FormatInt(account.Id, 10)
 
+	cache := make(map[string]interface{})
+
 	dsnap, err := fb.firestore.Collection("assets").Doc(id).Collection("caches").Doc(subscription.Id).Get(fb.ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			return nil, nil
+			return cache, nil
 		} else {
 			return nil, err
 		}
 	} else {
-		var cache map[string]interface{}
-		err = dsnap.DataTo(&cache)
-		if err != nil {
-			return nil, err
+		for k, v := range dsnap.Data() {
+			cache[k] = v
 		}
-
 		return cache, nil
 	}
 }

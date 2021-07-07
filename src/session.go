@@ -20,6 +20,13 @@ func SharedSession() *Session {
 			log.Fatal(err)
 		}
 
+		u := tgbotapi.NewUpdate(0)
+		u.Timeout = 10
+		_, err = bot.GetUpdates(u)
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		session = &Session{
 			token: token,
 			bot:   bot,
